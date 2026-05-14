@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PKT/PKA → JSON (zdarma)</title>
+  <script src="https://cdn.jsdelivr.net/npm/pako@2/dist/pako.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 40px 16px 60px;
+    }
+
+    .card {
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 20px;
+      padding: 40px 36px;
+      width: 100%; max-width: 620px;
+      backdrop-filter: blur(8px);
+    }
+
+    h1 { font-size: 2rem; font-weight: 700; letter-spacing: -1px; margin-bottom: 6px; }
+    h1 span { color: #38bdf8; }
+    .sub { color: #94a3b8; font-size: .95rem; margin-bottom: 32px; line-height: 1.5; }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed rgba(56,189,248,.4);
+      border-radius: 14px;
+      padding: 40px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all .2s;
+      position: relative;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: #38bdf8;
+      background: rgba(56,189,248,.05);
+    }
+    .drop-zone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+    }
+    .drop-icon { font-size: 2.5rem; margin-bottom: 10px; }
+    .drop-text { font-size: 1rem; color: #cbd5e1; }
+    .drop-hint { font-size: .8rem; color: #64748b; margin-top: 6px; }
+
+    /* File preview */
+    .file-preview {
+      display: none;
+      background: rgba(56,189,248,.06);
+      border: 1px solid rgba(56,189,248,.2);
+      border-radius: 12px;
+      padding: 14px 18px;
+      margin-top: 14px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .file-preview.hidden { display: none !important; }
+    .file-preview .file-icon { font-size: 2rem; flex-shrink: 0; }
+    .file-name { font-weight: 600; font-size: .95rem; }
+    .file-size { color: #94a3b8; font-size: .8rem; margin-top: 2px; }
+
+    /* Convert button */
+    .convert-btn {
+      margin-top: 20px;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #0ea5e9, #6366f1);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      transition: opacity .2s, transform .1s;
+    }
+    .convert-btn:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
+    .convert-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Log */
+    .log {
+      margin-top: 20px;
+      background: rgba(0,0,0,.3);
+      border-radius: 10px;
+      padding: 14px;
+      font-family: monospace;
+      font-size: .8rem;
+      color: #94a3b8;
+      max-height: 160px;
+      overflow-y: auto;
+      display: none;
+    }
+    .log.visible { display: block; }
+    .log .ok { color: #4ade80; }
+    .log .err { color: #f87171; }
+    .log .info { color: #60a5fa; }
+
+    /* Result */
+    .result-box {
+      display: none;
+      margin-top: 24px;
+      border: 1px solid rgba(74,222,128,.25);
+      border-radius: 14px;
+      padding: 20px;
+      background: rgba(74,222,128,.04);
+    }
+    .result-box.visible { display: block; }
+    .result-title { font-weight: 700; color: #4ade80; margin-bottom: 14px; font-size: 1rem; }
+    .result-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .stat { background: rgba(255,255,255,.05); border-radius: 8px; padding: 10px 14px; }
+    .stat-val { font-size: 1.4rem; font-weight: 700; color: #38bdf8; }
+    .stat-lbl { font-size: .75rem; color: #94a3b8; margin-top: 2px; }
+    .dl-btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(74,222,128,.4);
+      background: rgba(74,222,128,.1);
+      color: #4ade80;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .dl-btn:hover { background: rgba(74,222,128,.18); }
+
+    /* Error banner */
+    .error-banner {
+      display: none;
+      margin-top: 16px;
+      padding: 12px 16px;
+      background: rgba(248,113,113,.1);
+      border: 1px solid rgba(248,113,113,.3);
+      border-radius: 10px;
+      color: #f87171;
+      font-size: .9rem;
+    }
+    .error-banner.visible { display: block; }
+
+    .note { margin-top: 28px; font-size: .8rem; color: #475569; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h1>PKT/PKA <span>→ JSON</span></h1>
+  <p class="sub">Konverze souborů Cisco Packet Tracer na JSON pro AI analýzu.<br>Vše běží lokálně v prohlížeči — žádný server, žádný klíč.</p>
+
+  <div class="drop-zone" id="dropZone">
+    <input type="file" id="fileInput" accept=".pkt,.pka" />
+    <div class="drop-icon">📁</div>
+    <div class="drop-text">Klikněte nebo přetáhněte .pkt / .pka soubor</div>
+    <div class="drop-hint">max 20 MB · Cisco Packet Tracer 7.x – 9.x</div>
+  </div>
+
+  <div class="file-preview hidden" id="filePreview">
+    <div class="file-icon" id="fileIcon">📄</div>
+    <div>
+      <div class="file-name" id="fileName"></div>
+      <div class="file-size" id="fileSize"></div>
+    </div>
+  </div>
+
+  <button class="convert-btn" id="convertBtn" disabled>
+    <span class="spinner" id="spinner"></span>
+    <span id="btnLabel">Vyberte soubor</span>
+  </button>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <div class="log" id="log"></div>
+
+  <div class="result-box" id="resultBox">
+    <div class="result-title">✓ Konverze úspěšná</div>
+    <div class="result-stats" id="resultStats"></div>
+    <button class="dl-btn" id="dlBtn">⬇ Stáhnout JSON</button>
+  </div>
+</div>
+
+<p class="note">Otevřený projekt · žádná telemetrie · soubory neopouštějí váš počítač</p>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  TWOFISH  (ported from Bjorn Edstrom's Python implementation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TF_tab_5b = [0, 90, 180, 238];
+const TF_tab_ef = [0, 238, 180, 90];
+const TF_ror4   = [0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15];
+const TF_ashx   = [0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 5, 14, 7];
+const TF_qt0 = [[8,1,7,13,6,15,3,2,0,11,5,9,14,12,10,4],[2,8,11,13,15,7,6,14,3,1,9,4,0,10,12,5]];
+const TF_qt1 = [[14,12,11,8,1,2,3,5,15,4,10,6,7,0,9,13],[1,14,2,11,4,12,3,7,6,13,10,5,15,9,0,8]];
+const TF_qt2 = [[11,10,5,14,6,13,9,0,12,8,15,3,2,4,7,1],[4,12,7,5,1,6,9,10,0,14,13,8,2,11,3,15]];
+const TF_qt3 = [[13,7,15,4,1,2,6,14,9,11,3,0,8,5,12,10],[11,9,5,1,12,3,13,14,6,4,7,15,2,0,8,10]];
+
+function tf_rotr32(x, n) { x = x >>> 0; return ((x >>> n) | (x << (32 - n))) >>> 0; }
+function tf_rotl32(x, n) { x = x >>> 0; return ((x << n) | (x >>> (32 - n))) >>> 0; }
+function tf_byte(x, n)   { return (x >>> (8 * n)) & 0xff; }
+
+function tf_qp(n, x) {
+  const a0 = x >> 4, b0 = x & 15;
+  const a1 = a0 ^ b0, b1 = TF_ror4[b0] ^ TF_ashx[a0];
+  const a2 = TF_qt0[n][a1], b2 = TF_qt1[n][b1];
+  const a3 = a2 ^ b2, b3 = TF_ror4[b2] ^ TF_ashx[a2];
+  const a4 = TF_qt2[n][a3], b4 = TF_qt3[n][b3];
+  return (b4 << 4) | a4;
+}
+
+function tf_gen_qtab(ctx) {
+  for (let i = 0; i < 256; i++) {
+    ctx.q_tab[0][i] = tf_qp(0, i);
+    ctx.q_tab[1][i] = tf_qp(1, i);
+  }
+}
+
+function tf_gen_mtab(ctx) {
+  const q = ctx.q_tab;
+  for (let i = 0; i < 256; i++) {
+    let f01 = q[1][i];
+    let f5b = (f01 ^ (f01 >>> 2) ^ TF_tab_5b[f01 & 3]) & 0xff;
+    let fef = (f01 ^ (f01 >>> 1) ^ (f01 >>> 2) ^ TF_tab_ef[f01 & 3]) & 0xff;
+    ctx.m_tab[0][i] = (f01 | (f5b << 8) | (fef << 16) | (fef << 24)) >>> 0;
+    ctx.m_tab[2][i] = (f5b | (fef << 8) | (f01 << 16) | (fef << 24)) >>> 0;
+
+    f01 = q[0][i];
+    f5b = (f01 ^ (f01 >>> 2) ^ TF_tab_5b[f01 & 3]) & 0xff;
+    fef = (f01 ^ (f01 >>> 1) ^ (f01 >>> 2) ^ TF_tab_ef[f01 & 3]) & 0xff;
+    ctx.m_tab[1][i] = (fef | (fef << 8) | (f5b << 16) | (f01 << 24)) >>> 0;
+    ctx.m_tab[3][i] = (f5b | (f01 << 8) | (fef << 16) | (f5b << 24)) >>> 0;
+  }
+}
+
+function tf_mds_rem(p0, p1) {
+  p0 = p0 >>> 0; p1 = p1 >>> 0;
+  for (let i = 0; i < 8; i++) {
+    const t = (p1 >>> 24) & 0xff;
+    p1 = (((p1 << 8) | (p0 >>> 24)) >>> 0);
+    p0 = (p0 << 8) >>> 0;
+    let u = (t << 1) & 0x1ff;
+    if (t & 0x80) u ^= 0x014d;
+    p1 = (p1 ^ t ^ ((u << 16) >>> 0)) >>> 0;
+    u ^= (t >>> 1);
+    if (t & 0x01) u ^= (0x014d >>> 1);
+    p1 = (p1 ^ ((u << 24) >>> 0) ^ ((u << 8) >>> 0)) >>> 0;
+  }
+  return p1;
+}
+
+function tf_h_fun(ctx, x, key) {
+  let b0 = tf_byte(x, 0), b1 = tf_byte(x, 1), b2 = tf_byte(x, 2), b3 = tf_byte(x, 3);
+  const q = ctx.q_tab;
+  if (ctx.k_len >= 4) {
+    b0 = q[1][b0] ^ tf_byte(key[3], 0);
+    b1 = q[0][b1] ^ tf_byte(key[3], 1);
+    b2 = q[0][b2] ^ tf_byte(key[3], 2);
+    b3 = q[1][b3] ^ tf_byte(key[3], 3);
+  }
+  if (ctx.k_len >= 3) {
+    b0 = q[1][b0] ^ tf_byte(key[2], 0);
+    b1 = q[1][b1] ^ tf_byte(key[2], 1);
+    b2 = q[0][b2] ^ tf_byte(key[2], 2);
+    b3 = q[0][b3] ^ tf_byte(key[2], 3);
+  }
+  b0 = q[0][q[0][b0] ^ tf_byte(key[1], 0)] ^ tf_byte(key[0], 0);
+  b1 = q[0][q[1][b1] ^ tf_byte(key[1], 1)] ^ tf_byte(key[0], 1);
+  b2 = q[1][q[0][b2] ^ tf_byte(key[1], 2)] ^ tf_byte(key[0], 2);
+  b3 = q[1][q[1][b3] ^ tf_byte(key[1], 3)] ^ tf_byte(key[0], 3);
+  return (ctx.m_tab[0][b0] ^ ctx.m_tab[1][b1] ^ ctx.m_tab[2][b2] ^ ctx.m_tab[3][b3]) >>> 0;
+}
+
+function tf_gen_mk_tab(ctx, key) {
+  const q = ctx.q_tab, m = ctx.m_tab, mk = ctx.mk_tab;
+  if (ctx.k_len === 2) {
+    for (let i = 0; i < 256; i++) {
+      mk[0][i] = m[0][q[0][q[0][i] ^ tf_byte(key[1],0)] ^ tf_byte(key[0],0)];
+      mk[1][i] = m[1][q[0][q[1][i] ^ tf_byte(key[1],1)] ^ tf_byte(key[0],1)];
+      mk[2][i] = m[2][q[1][q[0][i] ^ tf_byte(key[1],2)] ^ tf_byte(key[0],2)];
+      mk[3][i] = m[3][q[1][q[1][i] ^ tf_byte(key[1],3)] ^ tf_byte(key[0],3)];
+    }
+  } else if (ctx.k_len === 3) {
+    for (let i = 0; i < 256; i++) {
+      mk[0][i] = m[0][q[0][q[0][q[1][i]^tf_byte(key[2],0)]^tf_byte(key[1],0)]^tf_byte(key[0],0)];
+      mk[1][i] = m[1][q[0][q[1][q[1][i]^tf_byte(key[2],1)]^tf_byte(key[1],1)]^tf_byte(key[0],1)];
+      mk[2][i] = m[2][q[1][q[0][q[0][i]^tf_byte(key[2],2)]^tf_byte(key[1],2)]^tf_byte(key[0],2)];
+      mk[3][i] = m[3][q[1][q[1][q[0][i]^tf_byte(key[2],3)]^tf_byte(key[1],3)]^tf_byte(key[0],3)];
+    }
+  } else { // k_len === 4
+    for (let i = 0; i < 256; i++) {
+      mk[0][i] = m[0][q[0][q[0][q[1][q[1][i]^tf_byte(key[3],0)]^tf_byte(key[2],0)]^tf_byte(key[1],0)]^tf_byte(key[0],0)];
+      mk[1][i] = m[1][q[0][q[1][q[1][q[0][i]^tf_byte(key[3],1)]^tf_byte(key[2],1)]^tf_byte(key[1],1)]^tf_byte(key[0],1)];
+      mk[2][i] = m[2][q[1][q[0][q[0][q[0][i]^tf_byte(key[3],2)]^tf_byte(key[2],2)]^tf_byte(key[1],2)]^tf_byte(key[0],2)];
+      mk[3][i] = m[3][q[1][q[1][q[0][q[1][i]^tf_byte(key[3],3)]^tf_byte(key[2],3)]^tf_byte(key[1],3)]^tf_byte(key[0],3)];
+    }
+  }
+}
+
+function twofishSetKey(keyBytes) {
+  const ctx = {
+    k_len: 0,
+    l_key: new Uint32Array(40),
+    s_key: new Uint32Array(4),
+    q_tab: [new Uint8Array(256), new Uint8Array(256)],
+    m_tab: [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)],
+    mk_tab:[new Uint32Array(256), new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)],
+  };
+
+  const keyLen = keyBytes.length;
+  if (![16, 24, 32].includes(keyLen)) throw new Error('Key must be 16, 24 or 32 bytes');
+  ctx.k_len = (keyLen * 8) / 64; // 2, 3, or 4
+
+  // Parse key into word32 (little-endian)
+  const view = new DataView(keyBytes.buffer, keyBytes.byteOffset);
+  const key_word32 = new Uint32Array(keyLen / 4);
+  for (let i = 0; i < key_word32.length; i++) {
+    key_word32[i] = view.getUint32(i * 4, true); // little-endian
+  }
+
+  tf_gen_qtab(ctx);
+  tf_gen_mtab(ctx);
+
+  const me_key = new Uint32Array(4), mo_key = new Uint32Array(4);
+  for (let i = 0; i < ctx.k_len; i++) {
+    me_key[i] = key_word32[i * 2];
+    mo_key[i] = key_word32[i * 2 + 1];
+    ctx.s_key[ctx.k_len - 1 - i] = tf_mds_rem(me_key[i], mo_key[i]);
+  }
+
+  for (let i = 0; i < 40; i += 2) {
+    let a = (0x01010101 * i) >>> 0;
+    let b = (0x01010101 * (i + 1)) >>> 0;
+    a = tf_h_fun(ctx, a, me_key);
+    b = tf_rotl32(tf_h_fun(ctx, b, mo_key), 8);
+    ctx.l_key[i]     = (a + b) >>> 0;
+    ctx.l_key[i + 1] = tf_rotl32((a + 2 * b) >>> 0, 9);
+  }
+
+  tf_gen_mk_tab(ctx, ctx.s_key);
+  return ctx;
+}
+
+function twofishEncryptBlock(ctx, blockBytes) {
+  const v = new DataView(blockBytes.buffer, blockBytes.byteOffset);
+  const blk = [
+    (v.getUint32(0,  true) ^ ctx.l_key[0]) >>> 0,
+    (v.getUint32(4,  true) ^ ctx.l_key[1]) >>> 0,
+    (v.getUint32(8,  true) ^ ctx.l_key[2]) >>> 0,
+    (v.getUint32(12, true) ^ ctx.l_key[3]) >>> 0,
+  ];
+  const mk = ctx.mk_tab, lk = ctx.l_key;
+
+  for (let r = 0; r < 8; r++) {
+    let t0 = (mk[0][tf_byte(blk[0],0)] ^ mk[1][tf_byte(blk[0],1)] ^ mk[2][tf_byte(blk[0],2)] ^ mk[3][tf_byte(blk[0],3)]) >>> 0;
+    let t1 = (mk[0][tf_byte(blk[1],3)] ^ mk[1][tf_byte(blk[1],0)] ^ mk[2][tf_byte(blk[1],1)] ^ mk[3][tf_byte(blk[1],2)]) >>> 0;
+    blk[2] = tf_rotr32((blk[2] ^ (t0 + t1 + lk[4*r+8]) >>> 0) >>> 0, 1);
+    blk[3] = (tf_rotl32(blk[3], 1) ^ (t0 + 2*t1 + lk[4*r+9]) >>> 0) >>> 0;
+
+    t0 = (mk[0][tf_byte(blk[2],0)] ^ mk[1][tf_byte(blk[2],1)] ^ mk[2][tf_byte(blk[2],2)] ^ mk[3][tf_byte(blk[2],3)]) >>> 0;
+    t1 = (mk[0][tf_byte(blk[3],3)] ^ mk[1][tf_byte(blk[3],0)] ^ mk[2][tf_byte(blk[3],1)] ^ mk[3][tf_byte(blk[3],2)]) >>> 0;
+    blk[0] = tf_rotr32((blk[0] ^ (t0 + t1 + lk[4*r+10]) >>> 0) >>> 0, 1);
+    blk[1] = (tf_rotl32(blk[1], 1) ^ (t0 + 2*t1 + lk[4*r+11]) >>> 0) >>> 0;
+  }
+
+  const out = new Uint8Array(16);
+  const ov = new DataView(out.buffer);
+  ov.setUint32(0,  (blk[2] ^ lk[4]) >>> 0, true);
+  ov.setUint32(4,  (blk[3] ^ lk[5]) >>> 0, true);
+  ov.setUint32(8,  (blk[0] ^ lk[6]) >>> 0, true);
+  ov.setUint32(12, (blk[1] ^ lk[7]) >>> 0, true);
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CMAC / CTR / EAX
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BS = 16;
+
+function xorBlock(a, b) {
+  const out = new Uint8Array(BS);
+  for (let i = 0; i < BS; i++) out[i] = a[i] ^ b[i];
+  return out;
+}
+
+function lshift1(b) {
+  const out = new Uint8Array(b.length);
+  let carry = 0;
+  for (let i = b.length - 1; i >= 0; i--) {
+    out[i] = ((b[i] << 1) & 0xff) | carry;
+    carry = b[i] >> 7;
+  }
+  return out;
+}
+
+function cmacSubkeys(encBlock) {
+  const Rb = new Uint8Array(BS); Rb[15] = 0x87;
+  const L = encBlock(new Uint8Array(BS));
+  let K1 = lshift1(L);
+  if (L[0] & 0x80) { K1 = xorBlock(K1, Rb); }
+  let K2 = lshift1(K1);
+  if (K1[0] & 0x80) { K2 = xorBlock(K2, Rb); }
+  return [K1, K2];
+}
+
+function cmacDigest(data, encBlock, K1, K2) {
+  const n = data.length;
+  let blocks = [];
+  for (let i = 0; i < n; i += BS) blocks.push(data.slice(i, i + BS));
+
+  let last, main;
+  if (blocks.length === 0) {
+    const pad = new Uint8Array(BS); pad[0] = 0x80;
+    last = xorBlock(pad, K2); main = [];
+  } else if (blocks[blocks.length-1].length === BS) {
+    last = xorBlock(blocks[blocks.length-1], K1);
+    main = blocks.slice(0, -1);
+  } else {
+    const raw = blocks[blocks.length-1];
+    const pad = new Uint8Array(BS); pad.set(raw); pad[raw.length] = 0x80;
+    last = xorBlock(pad, K2);
+    main = blocks.slice(0, -1);
+  }
+
+  let X = new Uint8Array(BS);
+  for (const blk of main) X = encBlock(xorBlock(X, blk));
+  return encBlock(xorBlock(X, last));
+}
+
+function ctrProcess(data, encBlock, iv) {
+  const ctr = new Uint8Array(iv);
+  const out = new Uint8Array(data.length);
+  for (let off = 0; off < data.length; off += BS) {
+    const ks = encBlock(new Uint8Array(ctr));
+    // increment counter big-endian
+    for (let i = BS-1; i >= 0; i--) { ctr[i] = (ctr[i] + 1) & 0xff; if (ctr[i]) break; }
+    const end = Math.min(off + BS, data.length);
+    for (let j = off; j < end; j++) out[j] = data[j] ^ ks[j - off];
+  }
+  return out;
+}
+
+function eaxDecrypt(encBlock, nonce, ciphertext, tag) {
+  const [K1, K2] = cmacSubkeys(encBlock);
+
+  function omac(prefix, payload) {
+    const hdr = new Uint8Array(BS); hdr[BS-1] = prefix;
+    const msg = new Uint8Array(BS + payload.length);
+    msg.set(hdr); msg.set(payload, BS);
+    return cmacDigest(msg, encBlock, K1, K2);
+  }
+
+  const n_tag = omac(0x00, nonce);
+  const h_tag = omac(0x01, new Uint8Array(0));
+  const c_tag = omac(0x02, ciphertext);
+  const exp   = xorBlock(xorBlock(n_tag, h_tag), c_tag);
+
+  for (let i = 0; i < BS; i++) {
+    if (exp[i] !== tag[i]) throw new Error('EAX tag mismatch — soubor poškozen nebo nepodporovaný formát');
+  }
+  return ctrProcess(ciphertext, encBlock, n_tag);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PKT DECRYPT PIPELINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+function deobf_stage1(data) {
+  const L = data.length;
+  const out = new Uint8Array(L);
+  for (let i = 0; i < L; i++) {
+    out[i] = data[L-1-i] ^ ((L - i*L) & 0xff);
+  }
+  return out;
+}
+
+function deobf_stage2(data) {
+  const L = data.length;
+  const out = new Uint8Array(L);
+  for (let i = 0; i < L; i++) out[i] = data[i] ^ ((L - i) & 0xff);
+  return out;
+}
+
+// Older format (PT ≤ 8.x): simple XOR counter + zlib
+function decryptLegacy(data) {
+  let counter = data.length;
+  const out = new Uint8Array(data.length);
+  for (let i = 0; i < data.length; i++) {
+    out[i] = data[i] ^ (counter & 0xff);
+    counter--;
+  }
+  // Qt-prefixed zlib: first 4 bytes = expected uncompressed size (big-endian)
+  const expectedSize = (out[0]<<24 | out[1]<<16 | out[2]<<8 | out[3]) >>> 0;
+  const compressed = out.slice(4);
+  return pako.inflate(compressed).slice(0, expectedSize);
+}
+
+// Newer format (PT 9.x): stage1 + Twofish-EAX + stage2 + Qt-zlib
+function decryptV9(data) {
+  const KEY = new Uint8Array(16).fill(137);
+  const IV  = new Uint8Array(16).fill(16);
+
+  const ctx = twofishSetKey(KEY);
+  const encBlock = (block) => twofishEncryptBlock(ctx, block);
+
+  const stage1 = deobf_stage1(data);
+  const ciphertext = stage1.slice(0, -16);
+  const tag = stage1.slice(-16);
+  const decrypted = eaxDecrypt(encBlock, IV, ciphertext, tag);
+  const stage2 = deobf_stage2(decrypted);
+
+  const expectedSize = (stage2[0]<<24 | stage2[1]<<16 | stage2[2]<<8 | stage2[3]) >>> 0;
+  return pako.inflate(stage2.slice(4)).slice(0, expectedSize);
+}
+
+function decryptPkt(data) {
+  // Try v9 first, fall back to legacy
+  try {
+    return { xml: decryptV9(data), version: 'v9' };
+  } catch (e1) {
+    try {
+      return { xml: decryptLegacy(data), version: 'legacy' };
+    } catch (e2) {
+      throw new Error(`Nepodařilo se dešifrovat soubor.\nV9: ${e1.message}\nLegacy: ${e2.message}`);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  XML → JSON
+// ─────────────────────────────────────────────────────────────────────────────
+
+function txt(el, tag) {
+  const found = el.querySelector(tag);
+  return found ? (found.textContent || '').trim() : null;
+}
+
+function parseRunningConfig(rcEl) {
+  if (!rcEl) return null;
+  const lines = rcEl.querySelectorAll('LINE');
+  if (lines.length > 0) {
+    return Array.from(lines).map(l => l.textContent).join('\n');
+  }
+  const raw = rcEl.textContent.trim();
+  return raw || null;
+}
+
+function parseDevice(devEl) {
+  const engine = devEl.querySelector(':scope > ENGINE');
+  if (!engine) return null;
+
+  const name    = txt(engine, 'NAME')    || 'Unknown';
+  const type    = txt(engine, 'TYPE')    || 'Unknown';
+  const model   = (engine.querySelector('TYPE') || {}).getAttribute?.('model') || null;
+  const saveRef = txt(engine, 'SAVE_REF_ID') || '';
+
+  // Position
+  const logical = devEl.querySelector('WORKSPACE > LOGICAL');
+  const x = logical ? parseFloat(txt(logical, 'X') || '0') : 0;
+  const y = logical ? parseFloat(txt(logical, 'Y') || '0') : 0;
+
+  // Running config
+  const rcEl = engine.querySelector('RUNNINGCONFIG');
+  const runningConfig = parseRunningConfig(rcEl);
+
+  // Startup config
+  const scEl = engine.querySelector('STARTUPCONFIG');
+  const startupConfig = parseRunningConfig(scEl);
+
+  // Interfaces / ports
+  const interfaces = [];
+  const portEls = engine.querySelectorAll('PORT');
+  portEls.forEach(port => {
+    const mac      = txt(port, 'MACADDRESS');
+    const portName = txt(port, 'PORT_NAME');
+    const portType = txt(port, 'TYPE');
+    const power    = txt(port, 'POWER');
+    const bw       = txt(port, 'BANDWIDTH');
+
+    // IPs
+    const ips = [];
+    port.querySelectorAll('ADDRESS').forEach(addr => {
+      const ip = addr.textContent.trim();
+      if (ip && ip !== '0.0.0.0') ips.push(ip);
+    });
+
+    if (mac || ips.length || portName) {
+      interfaces.push({ name: portName, type: portType, mac, ips, bandwidth: bw, power });
+    }
+  });
+
+  return { name, type, model, saveRef, position: { x, y }, interfaces, runningConfig, startupConfig };
+}
+
+function pktXmlToJson(xmlBytes) {
+  const xmlStr = new TextDecoder('utf-8').decode(xmlBytes);
+  const doc = new DOMParser().parseFromString(xmlStr, 'application/xml');
+
+  const parseErr = doc.querySelector('parsererror');
+  if (parseErr) throw new Error('XML parsování selhalo: ' + parseErr.textContent.slice(0, 200));
+
+  const root = doc.documentElement;
+  const version = txt(root, 'VERSION') || 'unknown';
+
+  const network = root.querySelector('NETWORK');
+  if (!network) throw new Error('Chybí sekce NETWORK v souboru');
+
+  // --- Devices ---
+  const devices = [];
+  const saveRefMap = {};   // saveRef → device name
+
+  network.querySelectorAll('DEVICES > DEVICE').forEach(devEl => {
+    const dev = parseDevice(devEl);
+    if (!dev) return;
+    devices.push(dev);
+    if (dev.saveRef) saveRefMap[dev.saveRef] = dev.name;
+  });
+
+  // --- Links ---
+  const links = [];
+  network.querySelectorAll('LINKS > LINK').forEach(linkEl => {
+    const cableType = txt(linkEl, 'TYPE') || 'unknown';
+    const cable = linkEl.querySelector('CABLE');
+    if (!cable) return;
+
+    const froms = cable.querySelectorAll('FROM');
+    const tos   = cable.querySelectorAll('TO');
+    const ports = cable.querySelectorAll('PORT');
+
+    const fromRef  = froms[0]  ? froms[0].textContent.trim() : '';
+    const toRef    = tos[0]    ? tos[0].textContent.trim()   : '';
+    const fromPort = ports[0]  ? ports[0].textContent.trim() : '';
+    const toPort   = ports[1]  ? ports[1].textContent.trim() : '';
+
+    links.push({
+      cableType,
+      from: { device: saveRefMap[fromRef] || fromRef, port: fromPort },
+      to:   { device: saveRefMap[toRef]   || toRef,   port: toPort   },
+    });
+  });
+
+  // --- Description / notes ---
+  const description = txt(network, 'DESCRIPTION') || null;
+
+  // --- Notes (PKA activities) ---
+  const notes = [];
+  root.querySelectorAll('NOTES NOTE').forEach(n => {
+    const text = n.textContent.trim();
+    if (text) notes.push(text);
+  });
+
+  // --- Activity instructions (PKA) ---
+  let activity = null;
+  const actEl = root.querySelector('ACTIVITY');
+  if (actEl) {
+    activity = {
+      title: txt(actEl, 'TITLE'),
+      instructions: txt(actEl, 'INSTRUCTIONS') || txt(actEl, 'INSTRUCTION'),
+    };
+  }
+
+  return {
+    metadata: {
+      version,
+      generatedAt: new Date().toISOString(),
+      deviceCount: devices.length,
+      linkCount: links.length,
+    },
+    description,
+    activity,
+    notes,
+    devices,
+    links,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  UI
+// ─────────────────────────────────────────────────────────────────────────────
+
+const dropZone   = document.getElementById('dropZone');
+const fileInput  = document.getElementById('fileInput');
+const filePreview= document.getElementById('filePreview');
+const fileNameEl = document.getElementById('fileName');
+const fileSizeEl = document.getElementById('fileSize');
+const convertBtn = document.getElementById('convertBtn');
+const btnLabel   = document.getElementById('btnLabel');
+const spinner    = document.getElementById('spinner');
+const logEl      = document.getElementById('log');
+const resultBox  = document.getElementById('resultBox');
+const errorBanner= document.getElementById('errorBanner');
+const dlBtn      = document.getElementById('dlBtn');
+
+let selectedFile = null;
+let resultJson   = null;
+
+function fmtSize(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+function log(msg, type = 'info') {
+  logEl.classList.add('visible');
+  const span = document.createElement('span');
+  span.className = type;
+  span.textContent = msg + '\n';
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function showError(msg) {
+  errorBanner.textContent = msg;
+  errorBanner.classList.add('visible');
+}
+
+function hideError() {
+  errorBanner.classList.remove('visible');
+}
+
+function setFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['pkt', 'pka'].includes(ext)) {
+    showError('Podporovány jsou pouze soubory .pkt a .pka');
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showError('Soubor je příliš velký (max 20 MB)');
+    return;
+  }
+  hideError();
+  selectedFile = file;
+  fileNameEl.textContent = file.name;
+  fileSizeEl.textContent = fmtSize(file.size) + ' · ' + ext.toUpperCase();
+  filePreview.classList.remove('hidden');
+  convertBtn.disabled = false;
+  btnLabel.textContent = 'Konvertovat do JSON';
+  resultBox.classList.remove('visible');
+  logEl.innerHTML = ''; logEl.classList.remove('visible');
+}
+
+fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+
+convertBtn.addEventListener('click', async () => {
+  if (!selectedFile) return;
+
+  convertBtn.disabled = true;
+  spinner.style.display = 'inline-block';
+  btnLabel.textContent = 'Konvertuji...';
+  hideError();
+  logEl.innerHTML = ''; logEl.classList.remove('visible');
+  resultBox.classList.remove('visible');
+
+  try {
+    log(`📂 Načítám ${selectedFile.name} (${fmtSize(selectedFile.size)})`, 'info');
+
+    const arrayBuf = await selectedFile.arrayBuffer();
+    const data = new Uint8Array(arrayBuf);
+
+    log('🔓 Dešifruji soubor...', 'info');
+    const { xml, version } = decryptPkt(data);
+    log(`✓ Dešifrováno (formát: ${version}, XML: ${fmtSize(xml.length)})`, 'ok');
+
+    log('📊 Parsování topologie...', 'info');
+    const jsonObj = pktXmlToJson(xml);
+    log(`✓ Nalezeno ${jsonObj.metadata.deviceCount} zařízení, ${jsonObj.metadata.linkCount} spojení`, 'ok');
+
+    resultJson = jsonObj;
+    const jsonStr = JSON.stringify(jsonObj, null, 2);
+
+    // Show stats
+    const stats = document.getElementById('resultStats');
+    stats.innerHTML = [
+      ['Zařízení', jsonObj.metadata.deviceCount],
+      ['Spojení',  jsonObj.metadata.linkCount],
+      ['Verze PT', jsonObj.metadata.version],
+      ['JSON',     fmtSize(jsonStr.length)],
+    ].map(([label, val]) => `
+      <div class="stat">
+        <div class="stat-val">${val}</div>
+        <div class="stat-lbl">${label}</div>
+      </div>`).join('');
+
+    // Download handler
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const dlName = selectedFile.name.replace(/\.(pkt|pka)$/i, '.json');
+    dlBtn.onclick = () => {
+      const a = document.createElement('a');
+      a.href = url; a.download = dlName; a.click();
+    };
+
+    resultBox.classList.add('visible');
+    log('✓ Hotovo!', 'ok');
+
+  } catch (err) {
+    log('✗ Chyba: ' + err.message, 'err');
+    showError('Chyba: ' + err.message);
+    console.error(err);
+  } finally {
+    convertBtn.disabled = false;
+    spinner.style.display = 'none';
+    btnLabel.textContent = 'Konvertovat do JSON';
+  }
+});
+</script>
+</body>
+</html>
