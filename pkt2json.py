@@ -368,8 +368,14 @@ def _parse_device(dev_el):
     }
 
 
+def _sanitize_xml(xml_bytes: bytes) -> bytes:
+    """Strip characters invalid in XML 1.0 (control chars except tab/LF/CR)."""
+    import re
+    return re.sub(rb'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', b'', xml_bytes)
+
+
 def xml_to_json(xml_bytes: bytes) -> dict:
-    root = ET.fromstring(xml_bytes)
+    root = ET.fromstring(_sanitize_xml(xml_bytes))
     version = root.findtext('VERSION') or 'unknown'
 
     network = root.find('NETWORK')
